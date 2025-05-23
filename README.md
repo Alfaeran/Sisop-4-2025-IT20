@@ -1628,8 +1628,820 @@ int main(int argc, char *argv[]) {
     return fuse_main(argc, argv, &maimai_oper, NULL);
 }
 ```
+### Pembuatan fuse
+Sebelum FUSE berjalan, fungsi init_maimai_fs() akan membuat seluruh direktori yang diperlukan untuk menyimpan data backend dan direktori virtual yang akan di-mount.
+```c
+static void init_maimai_fs() {
+    mkdir(maimai_root_dir, 0755);
+    sprintf(chiho_dir, "%s/chiho", maimai_root_dir);
+    sprintf(fuse_dir, "%s/fuse_dir", maimai_root_dir);
+    mkdir(chiho_dir, 0755);
 
+    const char *areas[] = {"starter", "metro", "dragon", "blackrose", "heaven", "skystreet", "youth"};
+    int num_areas = 7;
+    for (int i = 0; i < num_areas; i++) {
+        char path[PATH_MAX];
+        sprintf(path, "%s/%s", chiho_dir, areas[i]);
+        mkdir(path, 0755);
+    }
 
+    mkdir(fuse_dir, 0755);
+    for (int i = 0; i < num_areas; i++) {
+        char path[PATH_MAX];
+        sprintf(path, "%s/%s", fuse_dir, areas[i]);
+        mkdir(path, 0755);
+    }
+
+    char path[PATH_MAX];
+    sprintf(path, "%s/7sref", fuse_dir);
+    mkdir(path, 0755);
+}
+
+```
+Setelah struktur direktori siap, program mendefinisikan operasi-operasi yang akan di-handle oleh FUSE melalui struct fuse_operations. 
+```c
+static struct fuse_operations maimai_oper = {
+    .getattr = maimai_getattr,
+    .readdir = maimai_readdir,
+    .read = maimai_read,
+    .write = maimai_write,
+    .create = maimai_create,
+    .unlink = maimai_unlink,
+};
+
+```
+### Operasi getattr
+Fungsi maimai_getattr bertanggung jawab untuk mendapatkan atribut dari file atau direktori.
+```c
+static int maimai_getattr(const char *path, struct stat *stbuf) {
+    memset(stbuf, 0, sizeof(struct stat));
+    
+    // Pengecekan root direktori
+    if (strcmp(path, "/") == 0) {
+        stbuf->st_mode = S_IFDIR | 0755;
+        stbuf->st_nlink = 2;
+        return 0;
+    }
+    
+    // Pengecekan direktori utama
+    if (strcmp(path, "/chiho") == 0 || strcmp(path, "/fuse_dir") == 0) {
+        stbuf->st_mode = S_IFDIR | 0755;
+        stbuf->st_nlink = 2;
+        return 0;
+    }
+    
+    // Pengecekan area-area
+    const char *areas[] = {"starter", "metro", "dragon", "blackrose", "heaven", "skystreet", "youth"};
+    int num_areas = 7;
+    
+    // Pengecekan path di setiap area
+    for (int i = 0; i < num_areas; i++) {
+        char area_path[100];
+        sprintf(area_path, "/chiho/%s", areas[i]);
+        if (strcmp(path, area_path) == 0) {
+            stbuf->st_mode = S_IFDIR | 0755;
+            stbuf->st_nlink = 2;
+            return 0;
+        }
+        
+        sprintf(area_path, "/fuse_dir/%s", areas[i]);
+        if (strcmp(path, area_path) == 0) {
+            stbuf->st_mode = S_IFDIR | 0755;
+            stbuf->st_nlink = 2;
+            return 0;
+        }
+    }
+    
+    // Pengecekan 7sref
+    if (strcmp(path, "/fuse_dir/7sref") == 0) {
+        stbuf->st_mode = S_IFDIR | 0755;
+        stbuf->st_nlink = 2;
+        return 0;
+    }
+    
+    // Pengecekan file di area-area spesifik
+    if (is_starter_path(path)) {
+        char transformed_path[PATH_MAX];
+        transform_starter_path(transformed_path, path);
+        int res = lstat(transformed_path, stbuf);
+        if (res == -1)
+            return -errno;
+        return 0;
+    }
+    
+    // Pengecekan serupa untuk area-area lain...
+    
+    // Pengecekan 7sref path
+    if (is_7sref_path(path)) {
+        char target_path[PATH_MAX];
+        if (transform_7sref_path(path, target_path)) {
+            return maimai_getattr(target_path, stbuf);
+        } else {
+            return -ENOENT;
+        }
+    }
+    
+    // Path default
+    char fullpath[PATH_MAX];
+    maimai_fullpath(fullpath, path);
+    int res = lstat(fullpath, stbuf);
+    if (res == -1)
+        return -errno;
+    return 0;
+}
+
+```
+### Operasi readdir
+```c
+static int maimai_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
+                         off_t offset, struct fuse_file_info *fi) {
+    (void) offset;
+    (void) fi;
+    
+    filler(buf, ".", NULL, 0);
+    filler(buf, "..", NULL, 0);
+    
+    // Pengecekan root direktori
+    if (strcmp(path, "/") == 0) {
+        filler(buf, "chiho", NULL, 0);
+        filler(buf, "fuse_dir", NULL, 0);
+        return 0;
+    }
+    
+    // Pengecekan direktori chiho
+    if (strcmp(path, "/chiho") == 0) {
+        filler(buf, "starter", NULL, 0);
+        filler(buf, "metro", NULL, 0);
+        // ... area lainnya
+        return 0;
+    }
+    
+    // Pengecekan direktori fuse_dir
+    if (strcmp(path, "/fuse_dir") == 0) {
+        filler(buf, "starter", NULL, 0);
+        filler(buf, "metro", NULL, 0);
+        // ... area lainnya
+        filler(buf, "7sref", NULL, 0);
+        return 0;
+    }
+    
+    // Pengecekan area starter
+    if (strcmp(path, "/fuse_dir/starter") == 0) {
+        char fullpath[PATH_MAX];
+        sprintf(fullpath, "%s/chiho/starter", maimai_root_dir);
+        DIR *dp = opendir(fullpath);
+        if (dp == NULL)
+            return -errno;
+            
+        struct dirent *de;
+        while ((de = readdir(dp)) != NULL) {
+            if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
+                continue;
+                
+            char filename[PATH_MAX];
+            strcpy(filename, de->d_name);
+            char *dot = strrchr(filename, '.');
+            if (dot && strcmp(dot, ".mai") == 0) {
+                *dot = '\0';  // Menghilangkan ekstensi .mai
+                struct stat st;
+                memset(&st, 0, sizeof(st));
+                st.st_ino = de->d_ino;
+                st.st_mode = S_IFREG | 0644;
+                if (filler(buf, filename, &st, 0))
+                    break;
+            }
+        }
+        closedir(dp);
+        return 0;
+    }
+    
+    // Pengecekan serupa untuk area-area lain...
+    
+    // Pengecekan 7sref
+    if (strcmp(path, "/fuse_dir/7sref") == 0) {
+        const char *areas[] = {"starter", "metro", "dragon", "blackrose", "heaven", "skystreet", "youth"};
+        int num_areas = 7;
+        
+        // Scan semua area dan tambahkan file dengan prefix area
+        for (int i = 0; i < num_areas; i++) {
+            char area_path[PATH_MAX];
+            sprintf(area_path, "%s/fuse_dir/%s", maimai_root_dir, areas[i]);
+            DIR *dp = opendir(area_path);
+            if (dp == NULL)
+                continue;
+                
+            struct dirent *de;
+            while ((de = readdir(dp)) != NULL) {
+                if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
+                    continue;
+                    
+                // Buat nama file dengan format: area_nama_file
+                char ref_name[PATH_MAX];
+                sprintf(ref_name, "%s_%s", areas[i], de->d_name);
+                struct stat st;
+                memset(&st, 0, sizeof(st));
+                st.st_ino = de->d_ino;
+                if (de->d_type == DT_DIR)
+                    st.st_mode = S_IFDIR | 0755;
+                else
+                    st.st_mode = S_IFREG | 0644;
+                if (filler(buf, ref_name, &st, 0))
+                    break;
+            }
+            closedir(dp);
+        }
+        return 0;
+    }
+    
+    // Default path
+    char fullpath[PATH_MAX];
+    maimai_fullpath(fullpath, path);
+    DIR *dp = opendir(fullpath);
+    if (dp == NULL)
+        return -errno;
+        
+    struct dirent *de;
+    while ((de = readdir(dp)) != NULL) {
+        if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
+            continue;
+            
+        struct stat st;
+        memset(&st, 0, sizeof(st));
+        st.st_ino = de->d_ino;
+        if (de->d_type == DT_DIR)
+            st.st_mode = S_IFDIR | 0755;
+        else
+            st.st_mode = S_IFREG | 0644;
+        if (filler(buf, de->d_name, &st, 0))
+            break;
+    }
+    closedir(dp);
+    return 0;
+}
+
+```
+### Operasi read
+```c
+static int maimai_read(const char *path, char *buf, size_t size, off_t offset,
+                      struct fuse_file_info *fi) {
+    (void) fi;
+    
+    // Area starter (tanpa transformasi konten)
+    if (is_starter_path(path)) {
+        char transformed_path[PATH_MAX];
+        transform_starter_path(transformed_path, path);
+        int fd = open(transformed_path, O_RDONLY);
+        if (fd == -1)
+            return -errno;
+        int res = pread(fd, buf, size, offset);
+        if (res == -1) {
+            res = -errno;
+            close(fd);
+            return res;
+        }
+        close(fd);
+        return res;
+    }
+    
+    // Area metro (dengan dekripsi)
+    if (is_metro_path(path)) {
+        char transformed_path[PATH_MAX];
+        transform_metro_path(transformed_path, path);
+        int fd = open(transformed_path, O_RDONLY);
+        if (fd == -1)
+            return -errno;
+        char *temp_buf = malloc(size);
+        if (!temp_buf) {
+            close(fd);
+            return -ENOMEM;
+        }
+        int res = pread(fd, temp_buf, size, offset);
+        if (res == -1) {
+            res = -errno;
+            free(temp_buf);
+            close(fd);
+            return res;
+        }
+        metro_decrypt(temp_buf, buf, res);
+        free(temp_buf);
+        close(fd);
+        return res;
+    }
+    
+    // Implementasi serupa untuk area-area lain...
+    
+    // Area heaven (dengan dekripsi AES)
+    if (is_heaven_path(path)) {
+        char transformed_path[PATH_MAX];
+        transform_heaven_path(transformed_path, path);
+        int fd = open(transformed_path, O_RDONLY);
+        if (fd == -1)
+            return -errno;
+        
+        struct stat st;
+        if (fstat(fd, &st) == -1) {
+            close(fd);
+            return -errno;
+        }
+        
+        unsigned char *encrypted_data = malloc(st.st_size);
+        if (!encrypted_data) {
+            close(fd);
+            return -ENOMEM;
+        }
+        
+        ssize_t bytes_read = read(fd, encrypted_data, st.st_size);
+        close(fd);
+        if (bytes_read != st.st_size) {
+            free(encrypted_data);
+            return -EIO;
+        }
+        
+        unsigned char *decrypted_data = malloc(st.st_size);
+        if (!decrypted_data) {
+            free(encrypted_data);
+            return -ENOMEM;
+        }
+        
+        int decrypted_len = 0;
+        if (!heaven_decrypt(encrypted_data, bytes_read, decrypted_data, &decrypted_len)) {
+            free(encrypted_data);
+            free(decrypted_data);
+            return -EIO;
+        }
+        
+        if (offset < decrypted_len) {
+            if (offset + size > decrypted_len)
+                size = decrypted_len - offset;
+            memcpy(buf, decrypted_data + offset, size);
+        } else {
+            size = 0;
+        }
+        
+        free(encrypted_data);
+        free(decrypted_data);
+        return size;
+    }
+    
+    // Area 7sref (redirect)
+    if (is_7sref_path(path)) {
+        char target_path[PATH_MAX];
+        if (transform_7sref_path(path, target_path)) {
+            return maimai_read(target_path, buf, size, offset, fi);
+        } else {
+            return -ENOENT;
+        }
+    }
+    
+    // Default path
+    char fullpath[PATH_MAX];
+    maimai_fullpath(fullpath, path);
+    int fd = open(fullpath, O_RDONLY);
+    if (fd == -1)
+        return -errno;
+    int res = pread(fd, buf, size, offset);
+    if (res == -1)
+        res = -errno;
+    close(fd);
+    return res;
+}
+
+```
+### Operasi write 
+```c
+static int maimai_write(const char *path, const char *buf, size_t size,
+                       off_t offset, struct fuse_file_info *fi) {
+    (void) fi;
+    
+    // Area starter (tanpa transformasi konten)
+    if (is_starter_path(path)) {
+        char transformed_path[PATH_MAX];
+        transform_starter_path(transformed_path, path);
+        int fd = open(transformed_path, O_WRONLY);
+        if (fd == -1)
+            return -errno;
+        int res = pwrite(fd, buf, size, offset);
+        if (res == -1) {
+            res = -errno;
+            close(fd);
+            return res;
+        }
+        close(fd);
+        return res;
+    }
+    
+    // Area metro (dengan enkripsi)
+    if (is_metro_path(path)) {
+        char transformed_path[PATH_MAX];
+        transform_metro_path(transformed_path, path);
+        int fd = open(transformed_path, O_WRONLY);
+        if (fd == -1)
+            return -errno;
+        char *temp_buf = malloc(size);
+        if (!temp_buf) {
+            close(fd);
+            return -ENOMEM;
+        }
+        metro_encrypt(buf, temp_buf, size);
+        int res = pwrite(fd, temp_buf, size, offset);
+        if (res == -1)
+            res = -errno;
+        free(temp_buf);
+        close(fd);
+        return res;
+    }
+    
+    // Implementasi serupa untuk area-area lain...
+    
+    // Area heaven (dengan enkripsi AES)
+    if (is_heaven_path(path)) {
+        char transformed_path[PATH_MAX];
+        transform_heaven_path(transformed_path, path);
+        int fd = open(transformed_path, O_RDWR | O_CREAT, 0644);
+        if (fd == -1)
+            return -errno;
+            
+        struct stat st;
+        if (fstat(fd, &st) == -1) {
+            close(fd);
+            return -errno;
+        }
+        
+        size_t total_size = offset + size;
+        unsigned char *plaintext = NULL;
+        
+        // Jika file sudah ada dan offset > 0, baca file dulu
+        if (st.st_size > 0 && offset > 0) {
+            // Proses membaca file yang ada, dekripsi, dan siapkan buffer
+            // ...
+        } else {
+            plaintext = malloc(total_size);
+            if (!plaintext) {
+                close(fd);
+                return -ENOMEM;
+            }
+            memset(plaintext, 0, total_size);
+        }
+        
+        // Salin data baru ke posisi offset
+        memcpy(plaintext + offset, buf, size);
+        
+        // Enkripsi dan tulis kembali
+        unsigned char *ciphertext = malloc(total_size + AES_BLOCK_SIZE + AES_BLOCK_SIZE);
+        if (!ciphertext) {
+            free(plaintext);
+            close(fd);
+            return -ENOMEM;
+        }
+        
+        int ciphertext_len = 0;
+        if (!heaven_encrypt(plaintext, total_size, ciphertext, &ciphertext_len)) {
+            free(plaintext);
+            free(ciphertext);
+            close(fd);
+            return -EIO;
+        }
+        
+        free(plaintext);
+        lseek(fd, 0, SEEK_SET);
+        if (ftruncate(fd, 0) == -1) {
+            free(ciphertext);
+            close(fd);
+            return -errno;
+        }
+        
+        ssize_t bytes_written = write(fd, ciphertext, ciphertext_len);
+        free(ciphertext);
+        close(fd);
+        if (bytes_written != ciphertext_len)
+            return -EIO;
+        return size;
+    }
+    
+    // Area 7sref (redirect)
+    if (is_7sref_path(path)) {
+        char target_path[PATH_MAX];
+        if (transform_7sref_path(path, target_path)) {
+            return maimai_write(target_path, buf, size, offset, fi);
+        } else {
+            return -ENOENT;
+        }
+    }
+    
+    // Default path
+    char fullpath[PATH_MAX];
+    maimai_fullpath(fullpath, path);
+    int fd = open(fullpath, O_WRONLY);
+    if (fd == -1)
+        return -errno;
+    int res = pwrite(fd, buf, size, offset);
+    if (res == -1)
+        res = -errno;
+    close(fd);
+    return res;
+}
+
+```
+### Operasi create
+```c
+static int maimai_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
+    // Area starter
+    if (is_starter_path(path)) {
+        char transformed_path[PATH_MAX];
+        transform_starter_path(transformed_path, path);
+        int fd = open(transformed_path, O_CREAT | O_EXCL | O_WRONLY, mode);
+        if (fd == -1)
+            return -errno;
+        fi->fh = fd;
+        return 0;
+    }
+    
+    // Implementasi serupa untuk area-area lain...
+    
+    // Area heaven (dengan enkripsi AES)
+    if (is_heaven_path(path)) {
+        char transformed_path[PATH_MAX];
+        transform_heaven_path(transformed_path, path);
+        int fd = open(transformed_path, O_CREAT | O_WRONLY, mode);
+        if (fd == -1)
+            return -errno;
+        close(fd);
+        fi->fh = 0;
+        return 0;
+    }
+    
+    // Area skystreet (dengan kompresi)
+    if (is_skystreet_path(path)) {
+        char transformed_path[PATH_MAX];
+        transform_skystreet_path(transformed_path, path);
+        unsigned char empty[] = "";
+        unsigned char *compressed_data = NULL;
+        size_t compressed_len = 0;
+        int ret = skystreet_compress(empty, 0, &compressed_data, &compressed_len);
+        if (ret != Z_OK)
+            return -EIO;
+        int fd = open(transformed_path, O_CREAT | O_WRONLY, mode);
+        if (fd == -1) {
+            free(compressed_data);
+            return -errno;
+        }
+        write(fd, compressed_data, compressed_len);
+        close(fd);
+        free(compressed_data);
+        fi->fh = 0;
+        return 0;
+    }
+    
+    // Area 7sref (redirect)
+    if (is_7sref_path(path)) {
+        char target_path[PATH_MAX];
+        if (transform_7sref_path(path, target_path)) {
+            return maimai_create(target_path, mode, fi);
+        } else {
+            return -ENOENT;
+        }
+    }
+    
+    // Default path
+    char fullpath[PATH_MAX];
+    maimai_fullpath(fullpath, path);
+    int fd = open(fullpath, O_CREAT | O_EXCL | O_WRONLY, mode);
+    if (fd == -1)
+        return -errno;
+    fi->fh = fd;
+    return 0;
+}
+
+```
+### Operasi unlink
+```c
+static int maimai_unlink(const char *path) {
+    // Area starter
+    if (is_starter_path(path)) {
+        char transformed_path[PATH_MAX];
+        transform_starter_path(transformed_path, path);
+        int res = unlink(transformed_path);
+        if (res == -1)
+            return -errno;
+        return 0;
+    }
+    
+    // Implementasi serupa untuk area-area lain...
+    
+    // Area 7sref (redirect)
+    if (is_7sref_path(path)) {
+        char target_path[PATH_MAX];
+        if (transform_7sref_path(path, target_path)) {
+            return maimai_unlink(target_path);
+        } else {
+            return -ENOENT;
+        }
+    }
+    
+    // Default path
+    char fullpath[PATH_MAX];
+    maimai_fullpath(fullpath, path);
+    int res = unlink(fullpath);
+    if (res == -1)
+        return -errno;
+    return 0;
+}
+
+```
+### Starter Chiho
+Pada Starter Chiho, semua file yang masuk ke /fuse_dir/starter/ akan disimpan di backend /chiho/starter/ dengan tambahan ekstensi .mai
+```c
+static int is_starter_path(const char *path) {
+    return (strncmp(path, "/fuse_dir/starter/", 18) == 0);
+}
+
+```
+Transformasi nama file dilakukan agar file di backend memiliki ekstensi .mai:
+```c
+static void transform_starter_path(char *result, const char *path) {
+    char filename[PATH_MAX];
+    strcpy(filename, path + 18);
+    sprintf(result, "%s/chiho/starter/%s.mai", maimai_root_dir, filename);
+}
+
+```
+Pada operasi read dan write, file diakses secara normal tanpa encoding atau enkripsi, hanya transformasi nama file saja.
+### Metropolis (Metro) Chiho
+Di Metropolis Chiho, file di /fuse_dir/metro/ disimpan di backend /chiho/metro/ dengan ekstensi .ccc. Isi file di-backend dienkripsi dengan shift karakter berdasarkan posisi byte, dan didekripsi saat dibaca di FUSE. 
+```c
+static int is_metro_path(const char *path) {
+    return (strncmp(path, "/fuse_dir/metro/", 16) == 0);
+}
+static void transform_metro_path(char *result, const char *path) {
+    char filename[PATH_MAX];
+    strcpy(filename, path + 16);
+    sprintf(result, "%s/chiho/metro/%s.ccc", maimai_root_dir, filename);
+}
+
+```
+Fungsi enkripsi dan dekripsi karakter:
+```c
+static void metro_encrypt(const char *input, char *output, size_t size) {
+    for (size_t i = 0; i < size; i++) {
+        output[i] = (input[i] + (i % 256)) % 256;
+    }
+}
+static void metro_decrypt(const char *input, char *output, size_t size) {
+    for (size_t i = 0; i < size; i++) {
+        output[i] = (input[i] - (i % 256) + 256) % 256;
+    }
+}
+
+```
+### Dragon Chiho
+Pada Dragon Chiho, file di /fuse_dir/dragon/ disimpan di /chiho/dragon/ dengan ekstensi .rot dan di-backend dienkripsi menggunakan ROT13.
+```c
+static int is_dragon_path(const char *path) {
+    return (strncmp(path, "/fuse_dir/dragon/", 17) == 0);
+}
+static void transform_dragon_path(char *result, const char *path) {
+    char filename[PATH_MAX];
+    strcpy(filename, path + 17);
+    sprintf(result, "%s/chiho/dragon/%s.rot", maimai_root_dir, filename);
+}
+
+```
+fungsi ROT13:
+```c
+static void rot13(const char *input, char *output, size_t size) {
+    for (size_t i = 0; i < size; i++) {
+        char c = input[i];
+        if (isalpha(c)) {
+            if ((c >= 'a' && c <= 'm') || (c >= 'A' && c <= 'M'))
+                c += 13;
+            else
+                c -= 13;
+        }
+        output[i] = c;
+    }
+}
+
+```
+### Blackrose Chiho
+Di Blackrose Chiho, file di /fuse_dir/blackrose/ disimpan di /chiho/blackrose/ dengan ekstensi .bin tanpa encoding atau enkripsi tambahan.
+```c
+static int is_blackrose_path(const char *path) {
+    return (strncmp(path, "/fuse_dir/blackrose/", 20) == 0);
+}
+static void transform_blackrose_path(char *result, const char *path) {
+    char filename[PATH_MAX];
+    strcpy(filename, path + 20);
+    sprintf(result, "%s/chiho/blackrose/%s.bin", maimai_root_dir, filename);
+}
+
+```
+### HeaveN Chiho
+Heaven Chiho menggunakan enkripsi AES-256-CBC dengan IV random untuk setiap file di /chiho/heaven/ (ekstensi .enc). Path handler:
+```c
+static int is_heaven_path(const char *path) {
+    return (strncmp(path, "/fuse_dir/heaven/", 17) == 0);
+}
+static void transform_heaven_path(char *result, const char *path) {
+    char filename[PATH_MAX];
+    strcpy(filename, path + 17);
+    sprintf(result, "%s/chiho/heaven/%s.enc", maimai_root_dir, filename);
+}
+
+```
+Enkripsi dan dekripsi menggunakan OpenSSL:
+```c
+static int heaven_encrypt(const unsigned char *plaintext, int plaintext_len,
+                         unsigned char *ciphertext, int *ciphertext_len) {
+    EVP_CIPHER_CTX *ctx;
+    int len, ciphertext_length;
+    unsigned char iv[AES_BLOCK_SIZE];
+    RAND_bytes(iv, AES_BLOCK_SIZE); // IV random
+    memcpy(ciphertext, iv, AES_BLOCK_SIZE);
+    ciphertext_length = AES_BLOCK_SIZE;
+    ctx = EVP_CIPHER_CTX_new();
+    EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, heaven_key, iv);
+    EVP_EncryptUpdate(ctx, ciphertext + ciphertext_length, &len, plaintext, plaintext_len);
+    ciphertext_length += len;
+    EVP_EncryptFinal_ex(ctx, ciphertext + ciphertext_length, &len);
+    ciphertext_length += len;
+    EVP_CIPHER_CTX_free(ctx);
+    *ciphertext_len = ciphertext_length;
+    return 1;
+}
+static int heaven_decrypt(const unsigned char *ciphertext, int ciphertext_len,
+                         unsigned char *plaintext, int *plaintext_len) {
+    EVP_CIPHER_CTX *ctx;
+    int len, plaintext_length;
+    unsigned char iv[AES_BLOCK_SIZE];
+    memcpy(iv, ciphertext, AES_BLOCK_SIZE);
+    ctx = EVP_CIPHER_CTX_new();
+    EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, heaven_key, iv);
+    EVP_DecryptUpdate(ctx, plaintext, &len, ciphertext + AES_BLOCK_SIZE, ciphertext_len - AES_BLOCK_SIZE);
+    plaintext_length = len;
+    EVP_DecryptFinal_ex(ctx, plaintext + len, &len);
+    plaintext_length += len;
+    EVP_CIPHER_CTX_free(ctx);
+    *plaintext_len = plaintext_length;
+    return 1;
+}
+
+```
+### Skystreet Chiho
+```c
+static int is_skystreet_path(const char *path) {
+    return (strncmp(path, "/fuse_dir/skystreet/", 20) == 0);
+}
+static void transform_skystreet_path(char *result, const char *path) {
+    char filename[PATH_MAX];
+    strcpy(filename, path + 20);
+    sprintf(result, "%s/chiho/skystreet/%s.gz", maimai_root_dir, filename);
+}
+
+```
+Fungsi kompresi dan dekompresi:
+```c
+static int skystreet_compress(const unsigned char *data, size_t data_len,
+                             unsigned char **compressed_data, size_t *compressed_len) {
+    // ... kode zlib deflate seperti pada kode sumber
+}
+static int skystreet_decompress(const unsigned char *compressed_data, size_t compressed_len,
+                               unsigned char **data, size_t *data_len) {
+    // ... kode zlib inflate seperti pada kode sumber
+}
+
+```
+### 7sRef Chiho
+7sRef Chiho adalah gateway ke semua area lain. File di /fuse_dir/7sref/ memiliki format nama area_namafile dan otomatis di-redirect ke area yang sesuai. 
+```c
+static int is_7sref_path(const char *path) {
+    return (strncmp(path, "/fuse_dir/7sref/", 16) == 0);
+}
+static int extract_7sref_info(const char *path, char *area, char *filename) {
+    const char *file_part = path + 16;
+    const char *underscore = strchr(file_part, '_');
+    if (!underscore) return 0;
+    size_t area_len = underscore - file_part;
+    strncpy(area, file_part, area_len);
+    area[area_len] = '\0';
+    strcpy(filename, underscore + 1);
+    return 1;
+}
+static int transform_7sref_path(const char *path, char *target_path) {
+    char area[PATH_MAX];
+    char filename[PATH_MAX];
+    if (!extract_7sref_info(path, area, filename)) return 0;
+    sprintf(target_path, "/fuse_dir/%s/%s", area, filename);
+    return 1;
+}
+
+```
+pada area ini akan memanggil handler area target yang sesuai berdasarkan nama file.
+
+### Revisi
+- Kesalahan Struktur
+- Area Heaven tidak bisa baca file.txt.gz
+### Kesimpulan
+Setiap area memiliki fungsi deteksi path (is_*_path), transformasi path (transform_*_path), dan perlakuan data (enkripsi, kompresi, dsb) yang diimplementasikan dalam fungsi-fungsi khusus. Handler ini bekerja secara transparan sehingga pengguna tetap melihat dan mengakses file secara normal di FUSE
 ### soal 2
 ### soal 3
 ### soal 4
