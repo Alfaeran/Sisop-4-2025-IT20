@@ -380,7 +380,73 @@ return fuse_main(argc, argv, &baymax_oper, NULL);
 Mengatur base_dir dan path log
 
 Menjalankan fuse_main() untuk memulai sistem file virtual
+
 ### soal 3
+
+**Deskripsi Proyek**
+
+- AntiNK adalah sebuah sistem file berbasis FUSE yang dijalankan di dalam Docker. Sistem ini memiliki fitur pengamanan file otomatis berdasarkan nama file dan isi file:
+- Deteksi nama file: File dengan nama mengandung "nafis" atau "kimcun" akan:
+- Namanya dibalik (misalnya ```rahasia_nafis.txt jadi txt.sifan_aisahar```)
+- Isi file dienkripsi menggunakan ROT13
+- Aktivitas dicatat ke file log /var/log/it24.log (yang dibaca antink-logger)
+
+*Struktur Direktori*
+```
+.
+├── antink.c             # Kode sumber utama FUSE
+├── Dockerfile           # Untuk build image antink-server
+├── docker-compose.yml   # Untuk menjalankan sistem multi-container
+├── it24_host/           # Direktori sumber asli file
+│   ├── test.txt
+│   └── nafis_lagi.txt
+├── antink_mount/        # Direktori hasil mount oleh FUSE
+└── logs/
+    └── it24.log         # Log yang dimonitor oleh antink-logger
+```
+
+*Fitur :*
+
+- Read-only FUSE filesystem
+- Nama file dibalik jika mengandung substring "nafis"/"kimcun"
+- Isi file dienkripsi ROT13
+- Log aktivitas baca file terenkripsi (waktu, nama asli, nama dibalik)
+- Dockerized: Tidak mengubah file asli, aman untuk debugging
+
+*Cara Build & Run :*
+
+1. Build dan Jalankan
+```
+docker compose up --build
+```
+2. Cek Isi Folder Mount
+```
+ls antink_mount
+cat antink_mount/txt.sifan_igal  # file hasil proses dari nafis_lagi.txt
+```
+3. Cek Log
+```
+docker logs antink-logger
+Contoh File Input
+it24_host/nafis_lagi.txt:
+```
+```
+ini rahasia
+Hasil di antink_mount/
+```
+Nama file:
+```
+txt.sifan_igal
+Isi file (ROT13):
+```
+```
+vav enunfvn
+```
+Log (logs/it24.log):
+```
+[2025-05-22 18:42:12] File 'nafis_lagi.txt' dibalik menjadi 'txt.sifan_igal' dan terenkripsi.
+```
+
 ### soal 4
 
 ### maimai_fs.c
