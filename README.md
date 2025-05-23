@@ -383,7 +383,7 @@ Menjalankan fuse_main() untuk memulai sistem file virtual
 
 **Revisi**
 
-tidak bisa membuat file dengan perintah ```echo "..." > mount_dir/test.txt```
+tidak bisa membuat file baru dengan perintah ```echo "..." > mount_dir/test.txt```
 
 revisi FUSE agar bisa menerima file baru seperti contoh ```echo "test sisop 123" > mount_dir/test.txt``` kemudian mengubah fungsi readdir untuk menampilkan file selain Baymax.jpeg dan juga menambahkan dukungan file dinamis ke getattr, open, read, write, flush, dan unlink
 
