@@ -6,6 +6,62 @@
 - **M. Alfaeran Auriga Ruswandi NRP 5027241115**
 
 ### soal 1
+*Tujuan*
+- Mendownload file .zip dari Google Drive.
+- Unzip file tersebut yang berisi file teks hexadecimal (contoh: 1.txt, 2.txt, dst).
+- Mengonversi string hexadecimal di setiap file menjadi file gambar .png.
+- Menyimpan hasil konversi di direktori image/.
+- Mencatat aktivitas konversi ke dalam conversion.log.
+
+Struktur Folder
+Setelah unzip:
+```
+.
+├── anomali/
+│   ├── 1.txt
+│   ├── ...
+│   ├── image/
+│   │   ├── 1_image_YYYY-mm-dd_HH:MM:SS.png
+│   │   └── ...
+│   └── conversion.log
+```
+```
+[YYYY-mm-dd][HH:MM:SS]: Successfully converted hexadecimal text 1.txt to 1_image_YYYY-mm-dd_HH:MM:SS.png
+```
+Masalah yang Ditemukan :
+
+- Beberapa gambar hasil konversi rusak atau tidak terbaca.
+- Program tidak fleksibel untuk eksplorasi hasil karena hasilnya langsung ditulis ke disk.
+
+**II. Versi Revisi (Berbasis FUSE)**
+
+*Tujuan*
+- Memanfaatkan filesystem virtual FUSE untuk menampilkan hasil konversi secara on-demand.
+- Ketika pengguna mengakses file .png dalam folder mount (mnt/), sistem akan:
+- Membaca isi .txt hexadecimal dari anomali/.
+- Mengonversinya ke gambar PNG saat itu juga.
+- Menyediakan hasilnya langsung seolah-olah file .png memang sudah ada.
+- Menyediakan conversion.log secara virtual.
+
+Struktur Folder Setelah Mount:
+```
+mnt/
+├── 1_image_YYYY-mm-dd_HH:MM:SS.png  (dibuat saat dibuka)
+├── ...
+└── conversion.log  (berisi daftar konversi)
+```
+
+*Keunggulan :*
+
+- File tidak benar-benar ditulis ke disk, hanya tampil saat dibuka.
+- Fleksibel, ringan, dan cocok untuk sistem berbasis observasi anomali seperti proyek ini.
+
+*Masalah dan Perbaikan :*
+
+- Bug awal terkait buffer snprintf diperbaiki.
+- Error errno karena lupa #include <errno.h> juga sudah diselesaikan.
+- Mounting gagal karena mnt/ dimiliki root: disarankan gunakan mkdir mnt && chmod u+w mnt.
+
 ### soal 2
 ```
 #define FUSE_USE_VERSION 31
