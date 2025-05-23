@@ -6,6 +6,9 @@
 - **M. Alfaeran Auriga Ruswandi NRP 5027241115**
 
 ### soal 1
+### soal 2
+### soal 3
+### soal 4
 ```c
 #define FUSE_USE_VERSION 26
 #include <fuse.h>
@@ -2442,6 +2445,4 @@ pada area ini akan memanggil handler area target yang sesuai berdasarkan nama fi
 - Area Heaven tidak bisa baca file.txt.gz
 ### Kesimpulan
 Setiap area memiliki fungsi deteksi path (is_*_path), transformasi path (transform_*_path), dan perlakuan data (enkripsi, kompresi, dsb) yang diimplementasikan dalam fungsi-fungsi khusus. Handler ini bekerja secara transparan sehingga pengguna tetap melihat dan mengakses file secara normal di FUSE
-### soal 2
-### soal 3
-### soal 4
+
